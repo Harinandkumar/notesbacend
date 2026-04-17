@@ -4,8 +4,22 @@ const Note = require('../models/Note');
 const authMiddleware = require('../middleware/auth');
 const adminMiddleware = require('../middleware/admin');
 const { upload, uploadPDF } = require('../utils/cloudinary');
+const multer = require('multer');
 
 const router = express.Router();
+
+// Configure multer for multiple files
+const uploadMultiple = multer({ 
+    storage: multer.memoryStorage(),
+    limits: { fileSize: 10 * 1024 * 1024 }, // 10MB per file
+    fileFilter: (req, file, cb) => {
+        if (file.mimetype === 'application/pdf') {
+            cb(null, true);
+        } else {
+            cb(new Error('Only PDF files are allowed'), false);
+        }
+    }
+});
 
 // Get all notes (public)
 router.get('/', async (req, res) => {
@@ -13,43 +27,51 @@ router.get('/', async (req, res) => {
         const notes = await Note.find().sort({ createdAt: -1 });
         res.json(notes);
     } catch (error) {
-        console.error('Get notes error:', error);
         res.status(500).json({ message: 'Server error' });
     }
 });
 
-// Upload new note (admin only)
+// Get single note
+router.get('/:id', async (req, res) => {
+    try {
+        const note = await Note.findById(req.params.id);
+        if (!note) {
+            return res.status(404).json({ message: 'Note not found' });
+        }
+        res.json(note);
+    } catch (error) {
+        res.status(500).json({ message: 'Server error' });
+    }
+});
+
+// Upload single note (admin only)
 router.post('/upload', 
-    authMiddleware,
+    authMiddleware, 
     adminMiddleware,
     upload.single('pdf'),
+    [
+        body('title').trim().notEmpty().withMessage('Title is required'),
+        body('description').trim().notEmpty().withMessage('Description is required'),
+        body('price').isNumeric().withMessage('Price must be a number')
+    ],
     async (req, res) => {
         try {
-            console.log('=== UPLOAD REQUEST ===');
-            
-            // Check file
+            const errors = validationResult(req);
+            if (!errors.isEmpty()) {
+                return res.status(400).json({ errors: errors.array() });
+            }
+
             if (!req.file) {
                 return res.status(400).json({ message: 'PDF file is required' });
             }
 
             const { title, description, price } = req.body;
             
-            // Validate fields
-            if (!title || !description || !price) {
-                return res.status(400).json({ message: 'All fields are required' });
-            }
-            
-            console.log('Uploading to Cloudinary...');
-            
-            // Upload to Cloudinary
             const result = await uploadPDF(req.file.buffer, req.file.originalname);
             
-            console.log('Cloudinary upload complete');
-            
-            // Save to database
             const note = new Note({
-                title: title.trim(),
-                description: description.trim(),
+                title,
+                description,
                 price: parseFloat(price),
                 pdfUrl: result.secure_url,
                 pdfPublicId: result.public_id,
@@ -58,24 +80,98 @@ router.post('/upload',
             
             await note.save();
             
-            console.log('Note saved:', note._id);
-            
             res.status(201).json({
-                success: true,
                 message: 'Note uploaded successfully',
-                note: {
-                    id: note._id,
-                    title: note.title,
-                    price: note.price
+                note
+            });
+        } catch (error) {
+            console.error(error);
+            res.status(500).json({ message: 'Server error', error: error.message });
+        }
+    }
+);
+
+// ============================================
+// BATCH UPLOAD - MULTIPLE NOTES AT ONCE
+// ============================================
+
+router.post('/batch-upload',
+    authMiddleware,
+    adminMiddleware,
+    uploadMultiple.array('pdfs', 20), // Max 20 files
+    async (req, res) => {
+        try {
+            if (!req.files || req.files.length === 0) {
+                return res.status(400).json({ message: 'No PDF files uploaded' });
+            }
+
+            const { titles, descriptions, prices, useFileName } = req.body;
+            
+            const results = {
+                success: [],
+                failed: []
+            };
+            
+            // Process each file
+            for (let index = 0; index < req.files.length; index++) {
+                const file = req.files[index];
+                const fileName = file.originalname.replace('.pdf', '').replace(/_/g, ' ');
+                
+                try {
+                    // Determine title
+                    let title;
+                    let description;
+                    let price;
+                    
+                    if (useFileName === 'true' || !titles) {
+                        // Auto use file name as title
+                        title = fileName;
+                        description = `Study notes for ${fileName}`;
+                        price = 499; // Default price
+                    } else {
+                        // Use manual input
+                        title = titles && titles[index] ? titles[index] : fileName;
+                        description = descriptions && descriptions[index] ? descriptions[index] : `Study notes for ${title}`;
+                        price = prices && prices[index] ? parseFloat(prices[index]) : 499;
+                    }
+                    
+                    // Upload PDF to Cloudinary
+                    const result = await uploadPDF(file.buffer, file.originalname);
+                    
+                    const note = new Note({
+                        title: title,
+                        description: description,
+                        price: price,
+                        pdfUrl: result.secure_url,
+                        pdfPublicId: result.public_id,
+                        uploadedBy: req.userId
+                    });
+                    
+                    await note.save();
+                    
+                    results.success.push({
+                        fileName: file.originalname,
+                        title: title,
+                        id: note._id
+                    });
+                    
+                } catch (error) {
+                    results.failed.push({
+                        fileName: file.originalname,
+                        error: error.message
+                    });
                 }
+            }
+            
+            res.json({
+                success: true,
+                message: `Uploaded ${results.success.length} notes successfully`,
+                results: results
             });
             
         } catch (error) {
-            console.error('Upload error:', error);
-            res.status(500).json({ 
-                success: false,
-                message: 'Upload failed: ' + error.message 
-            });
+            console.error('Batch upload error:', error);
+            res.status(500).json({ message: 'Server error', error: error.message });
         }
     }
 );
@@ -90,9 +186,7 @@ router.delete('/:id', authMiddleware, adminMiddleware, async (req, res) => {
         
         await note.deleteOne();
         res.json({ message: 'Note deleted successfully' });
-        
     } catch (error) {
-        console.error('Delete error:', error);
         res.status(500).json({ message: 'Server error' });
     }
 });
