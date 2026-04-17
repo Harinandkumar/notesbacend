@@ -6,10 +6,10 @@ const userSchema = new mongoose.Schema({
   email: { type: String, required: true, unique: true, lowercase: true },
   password: { type: String, required: true },
   role: { type: String, enum: ['user', 'admin'], default: 'user' },
-  isBlocked: { type: Boolean, default: false }, // New
-  totalSpent: { type: Number, default: 0 }, // New
-  purchaseCount: { type: Number, default: 0 }, // New
-  lastLogin: { type: Date }, // New
+  isBlocked: { type: Boolean, default: false }, // Add this
+  totalSpent: { type: Number, default: 0 }, // Add this
+  purchaseCount: { type: Number, default: 0 }, // Add this
+  lastLogin: { type: Date }, // Add this
   createdAt: { type: Date, default: Date.now }
 });
 
