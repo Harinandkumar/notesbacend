@@ -51,8 +51,6 @@ const couponSchema = new mongoose.Schema({
     startDate: { type: Date, default: Date.now },
     endDate: { type: Date, required: true },
     isActive: { type: Boolean, default: true },
-    
-    // Visibility controls
     visibility: {
         type: String,
         enum: ['public', 'private', 'hidden'],
@@ -89,12 +87,10 @@ const couponSchema = new mongoose.Schema({
     }
 });
 
-// Indexes for faster queries
 couponSchema.index({ code: 1 });
 couponSchema.index({ isActive: 1, endDate: 1, startDate: 1 });
 couponSchema.index({ visibility: 1, showOnWebsite: 1 });
 
-// Generate shareable link before save
 couponSchema.pre('save', function(next) {
     if (!this.shareableLink) {
         this.shareableLink = `/coupon/${this.code}`;
@@ -102,16 +98,13 @@ couponSchema.pre('save', function(next) {
     next();
 });
 
-// Method to check if coupon is valid
 couponSchema.methods.isValid = async function(userId, amount = 0, noteId = null) {
     const now = new Date();
     
-    // Check if active
     if (!this.isActive) {
         return { valid: false, message: 'Coupon is inactive' };
     }
     
-    // Check date range
     if (now < this.startDate) {
         return { valid: false, message: 'Coupon has not started yet' };
     }
@@ -120,12 +113,10 @@ couponSchema.methods.isValid = async function(userId, amount = 0, noteId = null)
         return { valid: false, message: 'Coupon has expired' };
     }
     
-    // Check overall usage limit
     if (this.usageLimit && this.usedCount >= this.usageLimit) {
         return { valid: false, message: 'Coupon usage limit reached' };
     }
     
-    // Check per user limit
     if (userId && this.perUserLimit) {
         const userUsage = this.userUsage.find(u => u.userId && u.userId.toString() === userId.toString());
         if (userUsage && userUsage.usedCount >= this.perUserLimit) {
@@ -133,7 +124,6 @@ couponSchema.methods.isValid = async function(userId, amount = 0, noteId = null)
         }
     }
     
-    // Check if user is allowed (for private coupons)
     if (this.visibility === 'private' && this.applicableUsers && this.applicableUsers.length > 0 && userId) {
         const isAllowed = this.applicableUsers.some(id => id.toString() === userId.toString());
         if (!isAllowed) {
@@ -141,12 +131,10 @@ couponSchema.methods.isValid = async function(userId, amount = 0, noteId = null)
         }
     }
     
-    // Check minimum order amount
     if (amount > 0 && this.minOrderAmount > 0 && amount < this.minOrderAmount) {
         return { valid: false, message: `Minimum order amount should be ₹${this.minOrderAmount}` };
     }
     
-    // Check if applicable to specific notes
     if (noteId && this.applicableNotes && this.applicableNotes.length > 0) {
         const isApplicable = this.applicableNotes.some(id => id.toString() === noteId.toString());
         if (!isApplicable) {
@@ -157,7 +145,6 @@ couponSchema.methods.isValid = async function(userId, amount = 0, noteId = null)
     return { valid: true, message: 'Coupon is valid' };
 };
 
-// Method to calculate discount
 couponSchema.methods.calculateDiscount = function(amount) {
     let discount = 0;
     
@@ -173,7 +160,6 @@ couponSchema.methods.calculateDiscount = function(amount) {
     return Math.floor(discount);
 };
 
-// Method to apply coupon (increment usage)
 couponSchema.methods.applyCoupon = async function(userId) {
     this.usedCount += 1;
     

@@ -6,14 +6,41 @@ const User = require('../models/User');
 const Note = require('../models/Note');
 const Purchase = require('../models/Purchase');
 const Order = require('../models/Order');
+const Coupon = require('../models/Coupon');
 
-// All routes require admin authentication
+// ============================================
+// PUBLIC ROUTES - NO AUTHENTICATION REQUIRED
+// (These must be BEFORE router.use(authMiddleware))
+// ============================================
+
+// Get public coupons (for homepage) - PUBLIC ACCESS
+router.get('/coupons/public', async (req, res) => {
+    try {
+        const now = new Date();
+        const coupons = await Coupon.find({
+            isActive: true,
+            showOnWebsite: true,
+            visibility: 'public',
+            startDate: { $lte: now },
+            endDate: { $gte: now }
+        }).limit(10);
+        
+        res.json({ success: true, coupons });
+    } catch (error) {
+        console.error('Public coupons error:', error);
+        res.status(500).json({ success: false, message: error.message, coupons: [] });
+    }
+});
+
+// ============================================
+// PROTECTED ROUTES - ADMIN ONLY
+// All routes below this line require admin authentication
+// ============================================
 router.use(authMiddleware, adminMiddleware);
 
-// ============ DASHBOARD STATS (FULLY UPDATED) ============
+// ============ DASHBOARD STATS ============
 router.get('/stats', async (req, res) => {
     try {
-        // Basic stats
         const totalUsers = await User.countDocuments();
         const totalNotes = await Note.countDocuments();
         const totalPurchases = await Purchase.countDocuments({ status: 'completed' });
@@ -23,9 +50,6 @@ router.get('/stats', async (req, res) => {
             { $group: { _id: null, total: { $sum: '$amount' } } }
         ]);
         
-        // ============================================
-        // TOP SELLING NOTES - REAL DATA FROM DATABASE
-        // ============================================
         const topSelling = await Purchase.aggregate([
             { $match: { status: 'completed' } },
             { 
@@ -56,9 +80,6 @@ router.get('/stats', async (req, res) => {
             }
         ]);
         
-        // ============================================
-        // MONTHLY REVENUE - LAST 6 MONTHS
-        // ============================================
         const sixMonthsAgo = new Date();
         sixMonthsAgo.setMonth(sixMonthsAgo.getMonth() - 6);
         
@@ -92,40 +113,33 @@ router.get('/stats', async (req, res) => {
             { $sort: { '_id.year': 1, '_id.month': 1 } }
         ]);
         
-        // Format monthly revenue for chart
         const formattedMonthlyRevenue = monthlyRevenue.map(m => ({
             month: m._id.monthName,
             total: m.total,
             year: m._id.year
         }));
         
-        // ============================================
-        // RECENT ORDERS
-        // ============================================
         const recentOrders = await Purchase.find({ status: 'completed' })
             .populate('userId', 'name email')
             .populate('noteId', 'title')
             .sort({ purchasedAt: -1 })
             .limit(5);
         
-        // ============================================
-        // SEND RESPONSE
-        // ============================================
         res.json({
             success: true,
             totalUsers,
             totalNotes,
             totalPurchases,
             totalRevenue: revenue[0]?.total || 0,
-            topSelling: topSelling,           // ← Chart ke liye real data
-            monthlyRevenue: formattedMonthlyRevenue,  // ← Revenue chart ke liye
+            topSelling: topSelling,
+            monthlyRevenue: formattedMonthlyRevenue,
             recentOrders: recentOrders.map(order => ({
                 orderId: order.paymentId || order._id,
                 userName: order.userId?.name || 'Unknown',
                 userEmail: order.userId?.email || '',
                 noteTitle: order.noteId?.title || 'Unknown Note',
                 amount: order.amount,
-                date: order.purchatedAt,
+                date: order.purchasedAt,
                 status: order.status
             }))
         });
@@ -146,10 +160,7 @@ router.get('/stats', async (req, res) => {
 router.get('/users', async (req, res) => {
     try {
         const users = await User.find().select('-password').sort({ createdAt: -1 });
-        res.json({
-            success: true,
-            users: users
-        });
+        res.json({ success: true, users: users });
     } catch (error) {
         console.error('Users Error:', error);
         res.status(500).json({ success: false, message: error.message });
@@ -253,10 +264,7 @@ router.get('/orders', async (req, res) => {
             createdAt: purchase.purchasedAt
         }));
         
-        res.json({
-            success: true,
-            orders: orders
-        });
+        res.json({ success: true, orders: orders });
     } catch (error) {
         console.error('Orders Error:', error);
         res.status(500).json({ success: false, message: error.message });
@@ -288,10 +296,7 @@ router.post('/orders/:orderId/refund', async (req, res) => {
 router.get('/notes', async (req, res) => {
     try {
         const notes = await Note.find().sort({ createdAt: -1 });
-        res.json({
-            success: true,
-            notes: notes
-        });
+        res.json({ success: true, notes: notes });
     } catch (error) {
         res.status(500).json({ success: false, message: error.message });
     }
@@ -303,15 +308,7 @@ router.put('/notes/:noteId', async (req, res) => {
         
         const note = await Note.findByIdAndUpdate(
             req.params.noteId,
-            { 
-                title, 
-                description, 
-                price, 
-                discountedPrice, 
-                isFeatured, 
-                category, 
-                tags 
-            },
+            { title, description, price, discountedPrice, isFeatured, category, tags },
             { new: true, runValidators: true }
         );
         
@@ -416,10 +413,9 @@ router.post('/settings/change-password', async (req, res) => {
     }
 });
 
-// ============ DASHBOARD SUMMARY (EXTRA) ============
+// ============ DASHBOARD SUMMARY ============
 router.get('/summary', async (req, res) => {
     try {
-        // Get today's sales
         const today = new Date();
         today.setHours(0, 0, 0, 0);
         
@@ -439,7 +435,6 @@ router.get('/summary', async (req, res) => {
             }
         ]);
         
-        // Get pending orders
         const pendingOrders = await Purchase.countDocuments({ status: 'pending' });
         
         res.json({
@@ -452,10 +447,8 @@ router.get('/summary', async (req, res) => {
         res.status(500).json({ success: false, message: error.message });
     }
 });
-// ============================================
-// COUPON MANAGEMENT ROUTES
-// ============================================
-const Coupon = require('../models/Coupon');
+
+// ============ COUPON MANAGEMENT ROUTES ============
 
 // Get all coupons
 router.get('/coupons', async (req, res) => {
@@ -498,24 +491,6 @@ router.get('/coupons/stats/summary', async (req, res) => {
     }
 });
 
-// Get public coupons (for homepage)
-router.get('/coupons/public', async (req, res) => {
-    try {
-        const now = new Date();
-        const coupons = await Coupon.find({
-            isActive: true,
-            showOnWebsite: true,
-            visibility: 'public',
-            startDate: { $lte: now },
-            endDate: { $gte: now }
-        }).limit(10);
-        
-        res.json({ success: true, coupons });
-    } catch (error) {
-        res.status(500).json({ success: false, message: error.message });
-    }
-});
-
 // Create coupon
 router.post('/coupons', async (req, res) => {
     try {
@@ -535,7 +510,6 @@ router.post('/coupons', async (req, res) => {
             applicableNotes
         } = req.body;
         
-        // Check if coupon code already exists
         const existingCoupon = await Coupon.findOne({ code: code.toUpperCase() });
         if (existingCoupon) {
             return res.status(400).json({ success: false, message: 'Coupon code already exists' });
@@ -595,7 +569,7 @@ router.patch('/coupons/:id/visibility', async (req, res) => {
     }
 });
 
-// Toggle coupon status (activate/deactivate)
+// Toggle coupon status
 router.patch('/coupons/:id/toggle', async (req, res) => {
     try {
         const coupon = await Coupon.findById(req.params.id);
@@ -616,7 +590,7 @@ router.patch('/coupons/:id/toggle', async (req, res) => {
     }
 });
 
-// Generate shareable link for coupon
+// Generate shareable link
 router.post('/coupons/:id/share', async (req, res) => {
     try {
         const coupon = await Coupon.findById(req.params.id);
@@ -655,4 +629,5 @@ router.delete('/coupons/:id', async (req, res) => {
         res.status(500).json({ success: false, message: error.message });
     }
 });
+
 module.exports = router;
