@@ -21,7 +21,7 @@ const mongoose = require('mongoose');
 const cors = require('cors');
 
 const app = express();
-
+const adminRoutes = require('./routes/admin');
 // Middleware
 app.use(cors());
 app.use(express.json());
@@ -95,6 +95,7 @@ app.use('/api/auth', authRoutes);
 app.use('/api/notes', notesRoutes);
 app.use('/api/payment', paymentRoutes);
 app.use('/api/download', downloadRoutes);
+app.use('/api/admin', adminRoutes);
 
 // Serve static files from frontend (for production)
 if (process.env.NODE_ENV === 'production') {
