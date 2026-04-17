@@ -1,0 +1,96 @@
+# Dependencies
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+package-lock.json
+yarn.lock
+
+# Environment variables
+.env
+.env.local
+.env.production
+.env.development
+
+# Database
+*.db
+*.sqlite
+*.sqlite3
+
+# Logs
+logs/
+*.log
+log.txt
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+*.swp
+*.swo
+*~
+
+# IDE files
+.vscode/
+.idea/
+*.sublime-*
+.project
+.classpath
+.settings/
+
+# Build files
+dist/
+build/
+out/
+
+# Coverage directory used by tools like istanbul
+coverage/
+.nyc_output/
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+
+# PM2 files
+.pm2/
+
+# Environment specific
+.env.test
+.env.staging
+
+# Uploads
+uploads/
+temp-uploads/
+
+# Certificates
+*.pem
+*.crt
+*.key
+
+# Docker
+Dockerfile
+docker-compose.yml
+.dockerignore
+
+# Backup files
+*.bak
+*.backup
+*.old
+
+# MongoDB files
+dump/
+mongodump/
+
+# Cloudinary cache
+.cloudinary_cache/
+
+# JWT secrets file
+jwt_secret.txt
+
+# API keys file
+api_keys.txt
