@@ -12,7 +12,81 @@ const razorpay = new Razorpay({
   key_secret: process.env.RAZORPAY_KEY_SECRET
 });
 
-// Create order
+// ============================================
+// COUPON VALIDATION ROUTE
+// ============================================
+
+// Validate coupon (public endpoint)
+router.post('/validate-coupon', authMiddleware, async (req, res) => {
+    try {
+        const { code, amount, noteId } = req.body;
+        
+        if (!code) {
+            return res.status(400).json({ success: false, message: 'Coupon code is required' });
+        }
+        
+        const Coupon = require('../models/Coupon');
+        const coupon = await Coupon.findOne({ code: code.toUpperCase() });
+        
+        if (!coupon) {
+            return res.status(404).json({ success: false, message: 'Invalid coupon code' });
+        }
+        
+        // Check if user has already purchased this note
+        const existingPurchase = await Purchase.findOne({
+            userId: req.userId,
+            noteId: noteId,
+            status: 'completed'
+        });
+        
+        if (existingPurchase) {
+            return res.status(400).json({ 
+                success: false, 
+                message: 'You have already purchased this note. Cannot apply coupon.' 
+            });
+        }
+        
+        // Check if user has already used this coupon for a completed purchase
+        const couponUsed = await Purchase.findOne({
+            userId: req.userId,
+            couponCode: code.toUpperCase(),
+            status: 'completed'
+        });
+        
+        if (couponUsed) {
+            return res.status(400).json({ 
+                success: false, 
+                message: 'You have already used this coupon for a previous purchase' 
+            });
+        }
+        
+        const validation = await coupon.isValid(req.userId, amount, noteId);
+        
+        if (!validation.valid) {
+            return res.status(400).json({ success: false, message: validation.message });
+        }
+        
+        const discount = coupon.calculateDiscount(amount);
+        const finalAmount = amount - discount;
+        
+        res.json({
+            success: true,
+            coupon: {
+                id: coupon._id,
+                code: coupon.code,
+                discountType: coupon.discountType,
+                discountValue: coupon.discountValue,
+                discountAmount: discount,
+                finalAmount: finalAmount,
+                message: `Coupon applied! You saved ₹${discount}`
+            }
+        });
+    } catch (error) {
+        console.error('Coupon validation error:', error);
+        res.status(500).json({ success: false, message: error.message });
+    }
+});
+
 // Create order (with coupon support)
 router.post('/create-order', authMiddleware, async (req, res) => {
     try {
@@ -44,11 +118,20 @@ router.post('/create-order', authMiddleware, async (req, res) => {
             const coupon = await Coupon.findOne({ code: couponCode.toUpperCase() });
             
             if (coupon) {
-                const validation = await coupon.isValid(req.userId, note.price, noteId);
-                if (validation.valid) {
-                    discountAmount = coupon.calculateDiscount(note.price);
-                    finalAmount = note.price - discountAmount;
-                    appliedCoupon = coupon;
+                // Check if user already used this coupon for a completed purchase
+                const couponUsed = await Purchase.findOne({
+                    userId: req.userId,
+                    couponCode: couponCode.toUpperCase(),
+                    status: 'completed'
+                });
+                
+                if (!couponUsed) {
+                    const validation = await coupon.isValid(req.userId, note.price, noteId);
+                    if (validation.valid) {
+                        discountAmount = coupon.calculateDiscount(note.price);
+                        finalAmount = note.price - discountAmount;
+                        appliedCoupon = coupon;
+                    }
                 }
             }
         }
@@ -99,96 +182,59 @@ router.post('/create-order', authMiddleware, async (req, res) => {
 
 // Verify payment
 router.post('/verify', authMiddleware, async (req, res) => {
-  try {
-    const { orderId, paymentId, signature, noteId } = req.body;
-    
-    const body = orderId + '|' + paymentId;
-    const expectedSignature = crypto
-      .createHmac('sha256', process.env.RAZORPAY_KEY_SECRET)
-      .update(body.toString())
-      .digest('hex');
-    
-    if (expectedSignature !== signature) {
-      return res.status(400).json({ message: 'Invalid signature' });
+    try {
+        const {
+            orderId,
+            paymentId,
+            signature,
+            noteId,
+            couponCode
+        } = req.body;
+        
+        // Verify signature
+        const body = orderId + '|' + paymentId;
+        const expectedSignature = crypto
+            .createHmac('sha256', process.env.RAZORPAY_KEY_SECRET)
+            .update(body.toString())
+            .digest('hex');
+        
+        if (expectedSignature !== signature) {
+            return res.status(400).json({ message: 'Invalid signature' });
+        }
+        
+        // Update purchase record
+        const purchase = await Purchase.findOne({ orderId: orderId });
+        if (!purchase) {
+            return res.status(404).json({ message: 'Purchase not found' });
+        }
+        
+        purchase.paymentId = paymentId;
+        purchase.status = 'completed';
+        await purchase.save();
+        
+        res.json({
+            success: true,
+            message: 'Payment verified successfully',
+            purchase: purchase
+        });
+    } catch (error) {
+        console.error(error);
+        res.status(500).json({ message: 'Error verifying payment' });
     }
-    
-    const purchase = await Purchase.findOne({ orderId: orderId });
-    if (!purchase) {
-      return res.status(404).json({ message: 'Purchase not found' });
-    }
-    
-    purchase.paymentId = paymentId;
-    purchase.status = 'completed';
-    await purchase.save();
-    
-    res.json({
-      success: true,
-      message: 'Payment verified successfully'
-    });
-    
-  } catch (error) {
-    console.error('Verify error:', error);
-    res.status(500).json({ message: 'Error verifying payment' });
-  }
 });
 
 // Get user purchases
 router.get('/my-purchases', authMiddleware, async (req, res) => {
-  try {
-    const purchases = await Purchase.find({ 
-      userId: req.userId,
-      status: 'completed'
-    }).populate('noteId');
-    
-    res.json(purchases);
-  } catch (error) {
-    res.status(500).json({ message: 'Server error' });
-  }
-});
-// ============================================
-// COUPON VALIDATION ROUTE
-// ============================================
-
-// Validate coupon (public endpoint)
-router.post('/validate-coupon', authMiddleware, async (req, res) => {
     try {
-        const { code, amount, noteId } = req.body;
+        const purchases = await Purchase.find({ 
+            userId: req.userId,
+            status: 'completed'
+        }).populate('noteId');
         
-        if (!code) {
-            return res.status(400).json({ success: false, message: 'Coupon code is required' });
-        }
-        
-        const Coupon = require('../models/Coupon');
-        const coupon = await Coupon.findOne({ code: code.toUpperCase() });
-        
-        if (!coupon) {
-            return res.status(404).json({ success: false, message: 'Invalid coupon code' });
-        }
-        
-        const validation = await coupon.isValid(req.userId, amount, noteId);
-        
-        if (!validation.valid) {
-            return res.status(400).json({ success: false, message: validation.message });
-        }
-        
-        const discount = coupon.calculateDiscount(amount);
-        const finalAmount = amount - discount;
-        
-        res.json({
-            success: true,
-            coupon: {
-                id: coupon._id,
-                code: coupon.code,
-                discountType: coupon.discountType,
-                discountValue: coupon.discountValue,
-                discountAmount: discount,
-                finalAmount: finalAmount,
-                message: `Coupon applied! You saved ₹${discount}`
-            }
-        });
+        res.json(purchases);
     } catch (error) {
-        console.error('Coupon validation error:', error);
-        res.status(500).json({ success: false, message: error.message });
+        res.status(500).json({ message: 'Server error' });
     }
 });
+
 module.exports = router;
