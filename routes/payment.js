@@ -222,7 +222,59 @@ router.post('/verify', authMiddleware, async (req, res) => {
         res.status(500).json({ message: 'Error verifying payment' });
     }
 });
+// ============================================
+// FREE CHECKOUT - NO PAYMENT NEEDED
+// ============================================
 
+router.post('/free-checkout', authMiddleware, async (req, res) => {
+    try {
+        const { noteId } = req.body;
+        
+        const note = await Note.findById(noteId);
+        if (!note) {
+            return res.status(404).json({ message: 'Note not found' });
+        }
+        
+        // Check if already purchased
+        const existingPurchase = await Purchase.findOne({
+            userId: req.userId,
+            noteId: noteId,
+            status: 'completed'
+        });
+        
+        if (existingPurchase) {
+            return res.status(400).json({ message: 'You have already purchased this note' });
+        }
+        
+        // Check if note is free (price 0)
+        if (note.price > 0) {
+            return res.status(400).json({ message: 'This note is not free' });
+        }
+        
+        // Create free purchase record
+        const purchase = new Purchase({
+            userId: req.userId,
+            noteId: noteId,
+            paymentId: `free_${Date.now()}`,
+            orderId: `free_order_${Date.now()}`,
+            amount: 0,
+            originalAmount: 0,
+            status: 'completed'
+        });
+        
+        await purchase.save();
+        
+        res.json({
+            success: true,
+            message: 'Free note added to your purchases',
+            purchase: purchase
+        });
+        
+    } catch (error) {
+        console.error('Free checkout error:', error);
+        res.status(500).json({ message: 'Error processing free checkout' });
+    }
+});
 // Get user purchases
 router.get('/my-purchases', authMiddleware, async (req, res) => {
     try {
