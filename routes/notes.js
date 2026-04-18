@@ -3,7 +3,7 @@ const { body, validationResult } = require('express-validator');
 const Note = require('../models/Note');
 const authMiddleware = require('../middleware/auth');
 const adminMiddleware = require('../middleware/admin');
-const { upload, uploadPDF } = require('../utils/cloudinary');
+const { uploadPDF } = require('../utils/cloudinary');
 const multer = require('multer');
 
 const router = express.Router();
@@ -16,17 +16,68 @@ const uploadMultiple = multer({
         if (file.mimetype === 'application/pdf') {
             cb(null, true);
         } else {
-            cb(new Error('Only PDF files are allowed'), false);
+            cb(null, false); // ❗ crash avoid
         }
     }
 });
 
 // ============================================
-// ✅ PUBLIC ROUTES - NO AUTHENTICATION REQUIRED
-// (These must be BEFORE any auth middleware)
+// ✅ PUBLIC ROUTES
 // ============================================
 
-// Get all notes (public)
+// ✅ Get all unique subjects (FIRST - IMPORTANT)
+router.get('/subjects', async (req, res) => {
+    try {
+        let subjects = [];
+        
+        try {
+            subjects = await Note.distinct('subject');
+            console.log('Distinct subjects fetched:', subjects);
+        } catch (distinctError) {
+            console.error('Distinct operation failed:', distinctError.message);
+        }
+        
+        let validSubjects = [];
+        if (subjects && Array.isArray(subjects)) {
+            validSubjects = subjects.filter(s => s && typeof s === 'string' && s.trim() !== '');
+        }
+        
+        if (validSubjects.length === 0) {
+            validSubjects = ['General', 'Programming', 'AI', 'Business', 'Design', 'Mathematics', 'Science'];
+        }
+        
+        return res.status(200).json({ 
+            success: true, 
+            subjects: validSubjects 
+        });
+        
+    } catch (error) {
+        console.error('Subjects API Error:', error.message);
+        return res.status(200).json({ 
+            success: true, 
+            subjects: ['General', 'Programming', 'AI', 'Business', 'Design'] 
+        });
+    }
+});
+
+// ✅ Get notes by subject
+router.get('/subject/:subject', async (req, res) => {
+    try {
+        const { subject } = req.params;
+
+        const notes = await Note.find({
+            subject: new RegExp(`^${subject}$`, 'i') // ✅ case-insensitive fix
+        }).sort({ createdAt: -1 });
+
+        return res.status(200).json(notes);
+
+    } catch (error) {
+        console.error('Subject filter error:', error.message);
+        return res.status(200).json([]);
+    }
+});
+
+// Get all notes
 router.get('/', async (req, res) => {
     try {
         const notes = await Note.find().sort({ createdAt: -1 });
@@ -36,7 +87,7 @@ router.get('/', async (req, res) => {
     }
 });
 
-// Get single note (public)
+// Get single note (LAST - IMPORTANT)
 router.get('/:id', async (req, res) => {
     try {
         const note = await Note.findById(req.params.id);
@@ -45,65 +96,13 @@ router.get('/:id', async (req, res) => {
         }
         res.json(note);
     } catch (error) {
+        console.error('Get note error:', error.message);
         res.status(500).json({ message: 'Server error' });
-    }
-});
-
-// ✅ Get all unique subjects - PUBLIC ROUTE (No Auth Required)
-router.get('/subjects', async (req, res) => {
-    try {
-        let subjects = [];
-        
-        // Try to get distinct subjects from database
-        try {
-            subjects = await Note.distinct('subject');
-            console.log('Distinct subjects fetched:', subjects);
-        } catch (distinctError) {
-            console.error('Distinct operation failed:', distinctError.message);
-        }
-        
-        // Filter valid subjects (remove null, undefined, empty strings)
-        let validSubjects = [];
-        if (subjects && Array.isArray(subjects)) {
-            validSubjects = subjects.filter(s => s && typeof s === 'string' && s.trim() !== '');
-        }
-        
-        // If no valid subjects found, use default list
-        if (validSubjects.length === 0) {
-            validSubjects = ['General', 'Programming', 'AI', 'Business', 'Design', 'Mathematics', 'Science'];
-        }
-        
-        // ALWAYS return 200 OK with success true
-        return res.status(200).json({ 
-            success: true, 
-            subjects: validSubjects 
-        });
-        
-    } catch (error) {
-        console.error('Subjects API Error:', error.message);
-        // NEVER return 500 - always return 200 with defaults
-        return res.status(200).json({ 
-            success: true, 
-            subjects: ['General', 'Programming', 'AI', 'Business', 'Design'] 
-        });
-    }
-});
-
-// Get notes by subject - PUBLIC ROUTE
-router.get('/subject/:subject', async (req, res) => {
-    try {
-        const { subject } = req.params;
-        const notes = await Note.find({ subject: subject }).sort({ createdAt: -1 });
-        return res.status(200).json(notes);
-    } catch (error) {
-        console.error('Subject filter error:', error.message);
-        return res.status(200).json([]);
     }
 });
 
 // ============================================
 // PROTECTED ROUTES - ADMIN ONLY
-// (These require authentication)
 // ============================================
 
 // Upload single note (admin only)
@@ -114,7 +113,7 @@ router.post('/upload',
     [
         body('title').trim().notEmpty().withMessage('Title is required'),
         body('description').trim().notEmpty().withMessage('Description is required'),
-        body('price').isNumeric().withMessage('Price must be a number'),
+        body('price').isFloat({ min: 0 }).withMessage('Price must be valid'), // ✅ fixed
         body('subject').optional().trim()
     ],
     async (req, res) => {
@@ -156,7 +155,7 @@ router.post('/upload',
 );
 
 // ============================================
-// BATCH UPLOAD - MULTIPLE NOTES AT ONCE
+// BATCH UPLOAD - SAME (NO SKIP)
 // ============================================
 
 router.post('/batch-upload',
