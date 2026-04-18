@@ -196,23 +196,39 @@ router.delete('/:id', authMiddleware, adminMiddleware, async (req, res) => {
 // ============================================
 
 // Get all unique subjects
+// Get all unique subjects (SAFE VERSION)
 router.get('/subjects', async (req, res) => {
     try {
+        // Check if any note exists
+        const anyNote = await Note.findOne();
+        if (!anyNote) {
+            return res.json({ success: true, subjects: [] });
+        }
+        
+        // Get distinct subjects
         const subjects = await Note.distinct('subject');
-        res.json({ success: true, subjects: subjects.filter(s => s) });
+        
+        // Filter out null/undefined/empty values
+        const validSubjects = subjects.filter(s => s && s !== '' && s !== 'null' && s !== 'undefined');
+        
+        res.json({ success: true, subjects: validSubjects });
     } catch (error) {
-        res.status(500).json({ message: 'Server error' });
+        console.error('Subjects API Error:', error.message);
+        // Don't send 500, send empty array instead
+        res.status(200).json({ success: true, subjects: [] });
     }
 });
 
 // Get notes by subject
+// Get notes by subject (SAFE VERSION)
 router.get('/subject/:subject', async (req, res) => {
     try {
         const { subject } = req.params;
         const notes = await Note.find({ subject: subject }).sort({ createdAt: -1 });
         res.json(notes);
     } catch (error) {
-        res.status(500).json({ message: 'Server error' });
+        console.error('Subject filter error:', error.message);
+        res.status(200).json([]);
     }
 });
 
