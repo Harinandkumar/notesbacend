@@ -44,7 +44,7 @@ router.get('/:id', async (req, res) => {
     }
 });
 
-// Upload single note (admin only)
+// Upload single note (admin only) - UPDATED with subject field
 router.post('/upload', 
     authMiddleware, 
     adminMiddleware,
@@ -52,7 +52,8 @@ router.post('/upload',
     [
         body('title').trim().notEmpty().withMessage('Title is required'),
         body('description').trim().notEmpty().withMessage('Description is required'),
-        body('price').isNumeric().withMessage('Price must be a number')
+        body('price').isNumeric().withMessage('Price must be a number'),
+        body('subject').optional().trim() // ✅ ADDED subject validation
     ],
     async (req, res) => {
         try {
@@ -65,7 +66,7 @@ router.post('/upload',
                 return res.status(400).json({ message: 'PDF file is required' });
             }
 
-            const { title, description, price } = req.body;
+            const { title, description, price, subject } = req.body; // ✅ ADDED subject
             
             const result = await uploadPDF(req.file.buffer, req.file.originalname);
             
@@ -73,6 +74,7 @@ router.post('/upload',
                 title,
                 description,
                 price: parseFloat(price),
+                subject: subject || 'General', // ✅ ADDED subject field
                 pdfUrl: result.secure_url,
                 pdfPublicId: result.public_id,
                 uploadedBy: req.userId
@@ -92,56 +94,54 @@ router.post('/upload',
 );
 
 // ============================================
-// BATCH UPLOAD - MULTIPLE NOTES AT ONCE
+// BATCH UPLOAD - MULTIPLE NOTES AT ONCE (UPDATED with subject)
 // ============================================
 
 router.post('/batch-upload',
     authMiddleware,
     adminMiddleware,
-    uploadMultiple.array('pdfs', 20), // Max 20 files
+    uploadMultiple.array('pdfs', 20),
     async (req, res) => {
         try {
             if (!req.files || req.files.length === 0) {
                 return res.status(400).json({ message: 'No PDF files uploaded' });
             }
 
-            const { titles, descriptions, prices, useFileName } = req.body;
+            const { titles, descriptions, prices, useFileName, subject } = req.body;
             
             const results = {
                 success: [],
                 failed: []
             };
             
-            // Process each file
+            const defaultSubject = subject || 'General';
+            
             for (let index = 0; index < req.files.length; index++) {
                 const file = req.files[index];
                 const fileName = file.originalname.replace('.pdf', '').replace(/_/g, ' ');
                 
                 try {
-                    // Determine title
                     let title;
                     let description;
                     let price;
                     
                     if (useFileName === 'true' || !titles) {
-                        // Auto use file name as title
                         title = fileName;
                         description = `Study notes for ${fileName}`;
-                        price = 499; // Default price
+                        price = 499;
                     } else {
-                        // Use manual input
                         title = titles && titles[index] ? titles[index] : fileName;
                         description = descriptions && descriptions[index] ? descriptions[index] : `Study notes for ${title}`;
                         price = prices && prices[index] ? parseFloat(prices[index]) : 499;
                     }
                     
-                    // Upload PDF to Cloudinary
                     const result = await uploadPDF(file.buffer, file.originalname);
                     
                     const note = new Note({
                         title: title,
                         description: description,
                         price: price,
+                        subject: defaultSubject, // ✅ ADDED subject field
                         pdfUrl: result.secure_url,
                         pdfPublicId: result.public_id,
                         uploadedBy: req.userId
@@ -186,6 +186,31 @@ router.delete('/:id', authMiddleware, adminMiddleware, async (req, res) => {
         
         await note.deleteOne();
         res.json({ message: 'Note deleted successfully' });
+    } catch (error) {
+        res.status(500).json({ message: 'Server error' });
+    }
+});
+
+// ============================================
+// SUBJECT WISE ROUTES
+// ============================================
+
+// Get all unique subjects
+router.get('/subjects', async (req, res) => {
+    try {
+        const subjects = await Note.distinct('subject');
+        res.json({ success: true, subjects: subjects.filter(s => s) });
+    } catch (error) {
+        res.status(500).json({ message: 'Server error' });
+    }
+});
+
+// Get notes by subject
+router.get('/subject/:subject', async (req, res) => {
+    try {
+        const { subject } = req.params;
+        const notes = await Note.find({ subject: subject }).sort({ createdAt: -1 });
+        res.json(notes);
     } catch (error) {
         res.status(500).json({ message: 'Server error' });
     }

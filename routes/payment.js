@@ -329,7 +329,7 @@ router.post('/free-checkout', authMiddleware, async (req, res) => {
 });
 
 // ============================================
-// GET USER PURCHASES
+// GET USER PURCHASES (UPDATED - FILTER DELETED NOTES)
 // ============================================
 
 router.get('/my-purchases', authMiddleware, async (req, res) => {
@@ -339,7 +339,10 @@ router.get('/my-purchases', authMiddleware, async (req, res) => {
             status: 'completed'
         }).populate('noteId');
         
-        res.json(purchases);
+        // ✅ FILTER OUT DELETED NOTES (where noteId is null)
+        const validPurchases = purchases.filter(purchase => purchase.noteId !== null);
+        
+        res.json(validPurchases);
     } catch (error) {
         console.error('My purchases error:', error);
         res.status(500).json({ message: 'Server error' });
