@@ -16,7 +16,6 @@ const razorpay = new Razorpay({
 // COUPON VALIDATION ROUTE
 // ============================================
 
-// Validate coupon (public endpoint)
 router.post('/validate-coupon', authMiddleware, async (req, res) => {
     try {
         const { code, amount, noteId } = req.body;
@@ -87,7 +86,10 @@ router.post('/validate-coupon', authMiddleware, async (req, res) => {
     }
 });
 
-// Create order (with coupon support)
+// ============================================
+// CREATE ORDER (UPDATED - FIXED 500 ERROR)
+// ============================================
+
 router.post('/create-order', authMiddleware, async (req, res) => {
     try {
         const { noteId, couponCode } = req.body;
@@ -107,6 +109,13 @@ router.post('/create-order', authMiddleware, async (req, res) => {
         if (existingPurchase) {
             return res.status(400).json({ message: 'You have already purchased this note' });
         }
+        
+        // ✅ NEW: Delete any stale pending order for this user and note
+        await Purchase.deleteMany({
+            userId: req.userId,
+            noteId: noteId,
+            status: 'pending'
+        });
         
         let finalAmount = note.price;
         let appliedCoupon = null;
@@ -134,6 +143,34 @@ router.post('/create-order', authMiddleware, async (req, res) => {
                     }
                 }
             }
+        }
+        
+        // ✅ NEW: If final amount is 0 or less, create completed purchase directly
+        if (finalAmount <= 0) {
+            const purchase = new Purchase({
+                userId: req.userId,
+                noteId: noteId,
+                paymentId: `free_${Date.now()}`,
+                orderId: `free_order_${Date.now()}`,
+                amount: 0,
+                originalAmount: note.price,
+                couponCode: couponCode || null,
+                discountAmount: discountAmount,
+                status: 'completed'
+            });
+            
+            await purchase.save();
+            
+            if (appliedCoupon) {
+                await appliedCoupon.applyCoupon(req.userId);
+            }
+            
+            return res.json({
+                success: true,
+                isFree: true,
+                message: 'Free note added to your purchases',
+                noteTitle: note.title
+            });
         }
         
         const options = {
@@ -174,13 +211,17 @@ router.post('/create-order', authMiddleware, async (req, res) => {
             discountAmount: discountAmount,
             finalAmount: finalAmount
         });
+        
     } catch (error) {
-        console.error(error);
-        res.status(500).json({ message: 'Error creating order' });
+        console.error('Create order error:', error);
+        res.status(500).json({ message: 'Error creating order: ' + error.message });
     }
 });
 
-// Verify payment
+// ============================================
+// VERIFY PAYMENT
+// ============================================
+
 router.post('/verify', authMiddleware, async (req, res) => {
     try {
         const {
@@ -217,11 +258,13 @@ router.post('/verify', authMiddleware, async (req, res) => {
             message: 'Payment verified successfully',
             purchase: purchase
         });
+        
     } catch (error) {
-        console.error(error);
+        console.error('Verify error:', error);
         res.status(500).json({ message: 'Error verifying payment' });
     }
 });
+
 // ============================================
 // FREE CHECKOUT - NO PAYMENT NEEDED
 // ============================================
@@ -251,6 +294,13 @@ router.post('/free-checkout', authMiddleware, async (req, res) => {
             return res.status(400).json({ message: 'This note is not free' });
         }
         
+        // Delete any stale pending order
+        await Purchase.deleteMany({
+            userId: req.userId,
+            noteId: noteId,
+            status: 'pending'
+        });
+        
         // Create free purchase record
         const purchase = new Purchase({
             userId: req.userId,
@@ -259,6 +309,8 @@ router.post('/free-checkout', authMiddleware, async (req, res) => {
             orderId: `free_order_${Date.now()}`,
             amount: 0,
             originalAmount: 0,
+            couponCode: null,
+            discountAmount: 0,
             status: 'completed'
         });
         
@@ -275,7 +327,11 @@ router.post('/free-checkout', authMiddleware, async (req, res) => {
         res.status(500).json({ message: 'Error processing free checkout' });
     }
 });
-// Get user purchases
+
+// ============================================
+// GET USER PURCHASES
+// ============================================
+
 router.get('/my-purchases', authMiddleware, async (req, res) => {
     try {
         const purchases = await Purchase.find({ 
@@ -285,6 +341,7 @@ router.get('/my-purchases', authMiddleware, async (req, res) => {
         
         res.json(purchases);
     } catch (error) {
+        console.error('My purchases error:', error);
         res.status(500).json({ message: 'Server error' });
     }
 });
