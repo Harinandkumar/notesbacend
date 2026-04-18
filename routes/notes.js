@@ -3,7 +3,7 @@ const { body, validationResult } = require('express-validator');
 const Note = require('../models/Note');
 const authMiddleware = require('../middleware/auth');
 const adminMiddleware = require('../middleware/admin');
-const { uploadPDF } = require('../utils/cloudinary');
+const { upload, uploadPDF } = require('../utils/cloudinary'); // ✅ FIX 1
 const multer = require('multer');
 
 const router = express.Router();
@@ -16,7 +16,7 @@ const uploadMultiple = multer({
         if (file.mimetype === 'application/pdf') {
             cb(null, true);
         } else {
-            cb(null, false); // ❗ crash avoid
+            cb(new Error('Only PDF files are allowed'), false);
         }
     }
 });
@@ -25,7 +25,7 @@ const uploadMultiple = multer({
 // ✅ PUBLIC ROUTES
 // ============================================
 
-// ✅ Get all unique subjects (FIRST - IMPORTANT)
+// ✅ FIX 2: SUBJECTS FIRST
 router.get('/subjects', async (req, res) => {
     try {
         let subjects = [];
@@ -60,17 +60,12 @@ router.get('/subjects', async (req, res) => {
     }
 });
 
-// ✅ Get notes by subject
+// Get notes by subject
 router.get('/subject/:subject', async (req, res) => {
     try {
         const { subject } = req.params;
-
-        const notes = await Note.find({
-            subject: new RegExp(`^${subject}$`, 'i') // ✅ case-insensitive fix
-        }).sort({ createdAt: -1 });
-
+        const notes = await Note.find({ subject: subject }).sort({ createdAt: -1 });
         return res.status(200).json(notes);
-
     } catch (error) {
         console.error('Subject filter error:', error.message);
         return res.status(200).json([]);
@@ -87,7 +82,7 @@ router.get('/', async (req, res) => {
     }
 });
 
-// Get single note (LAST - IMPORTANT)
+// ❗ LAST me rakho
 router.get('/:id', async (req, res) => {
     try {
         const note = await Note.findById(req.params.id);
@@ -96,7 +91,6 @@ router.get('/:id', async (req, res) => {
         }
         res.json(note);
     } catch (error) {
-        console.error('Get note error:', error.message);
         res.status(500).json({ message: 'Server error' });
     }
 });
@@ -113,7 +107,7 @@ router.post('/upload',
     [
         body('title').trim().notEmpty().withMessage('Title is required'),
         body('description').trim().notEmpty().withMessage('Description is required'),
-        body('price').isFloat({ min: 0 }).withMessage('Price must be valid'), // ✅ fixed
+        body('price').isNumeric().withMessage('Price must be a number'),
         body('subject').optional().trim()
     ],
     async (req, res) => {
@@ -155,7 +149,7 @@ router.post('/upload',
 );
 
 // ============================================
-// BATCH UPLOAD - SAME (NO SKIP)
+// BATCH UPLOAD
 // ============================================
 
 router.post('/batch-upload',
@@ -237,7 +231,7 @@ router.post('/batch-upload',
     }
 );
 
-// Delete note (admin only)
+// Delete note
 router.delete('/:id', authMiddleware, adminMiddleware, async (req, res) => {
     try {
         const note = await Note.findById(req.params.id);
