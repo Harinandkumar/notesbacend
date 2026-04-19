@@ -33,7 +33,8 @@ router.post('/signup', [
       name,
       email,
       password,
-      role: isAdmin ? 'admin' : 'user'
+      role: isAdmin ? 'admin' : 'user',
+      isBlocked: false
     });
     
     await user.save();
@@ -76,6 +77,13 @@ router.post('/login', [
     const user = await User.findOne({ email });
     if (!user) {
       return res.status(401).json({ message: 'Invalid credentials' });
+    }
+    
+    // ✅ ADDED: Check if user is blocked
+    if (user.isBlocked) {
+      return res.status(403).json({ 
+        message: 'Your account has been blocked. Please contact admin for assistance.' 
+      });
     }
     
     const isMatch = await user.comparePassword(password);

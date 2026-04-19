@@ -28,6 +28,14 @@ const authMiddleware = async (req, res, next) => {
             return res.status(401).json({ message: 'Please authenticate - User not found' });
         }
 
+        // ✅ ADDED: Check if user is blocked
+        if (user.isBlocked) {
+            console.log('ERROR: User is blocked:', user.email);
+            return res.status(403).json({ 
+                message: 'Your account has been blocked. Please contact admin for assistance.' 
+            });
+        }
+
         console.log('Auth successful for:', user.email);
         req.user = user;
         req.userId = user._id;
