@@ -3,7 +3,7 @@ const { body, validationResult } = require('express-validator');
 const Note = require('../models/Note');
 const authMiddleware = require('../middleware/auth');
 const adminMiddleware = require('../middleware/admin');
-const { upload, uploadPDF } = require('../utils/cloudinary'); // ✅ FIX 1
+const { upload, uploadPDF } = require('../utils/cloudinary');
 const multer = require('multer');
 
 const router = express.Router();
@@ -25,7 +25,7 @@ const uploadMultiple = multer({
 // ✅ PUBLIC ROUTES
 // ============================================
 
-// ✅ FIX 2: SUBJECTS FIRST
+// ✅ Get all unique subjects - PUBLIC ROUTE
 router.get('/subjects', async (req, res) => {
     try {
         let subjects = [];
@@ -82,7 +82,7 @@ router.get('/', async (req, res) => {
     }
 });
 
-// ❗ LAST me rakho
+// Get single note
 router.get('/:id', async (req, res) => {
     try {
         const note = await Note.findById(req.params.id);
@@ -149,7 +149,7 @@ router.post('/upload',
 );
 
 // ============================================
-// BATCH UPLOAD
+// BATCH UPLOAD - FIXED (₹0 SUPPORT)
 // ============================================
 
 router.post('/batch-upload',
@@ -162,7 +162,7 @@ router.post('/batch-upload',
                 return res.status(400).json({ message: 'No PDF files uploaded' });
             }
 
-            const { titles, descriptions, prices, useFileName, subject } = req.body;
+            const { titles, descriptions, prices, useFileName, subject, defaultPrice } = req.body;
             
             const results = {
                 success: [],
@@ -170,6 +170,8 @@ router.post('/batch-upload',
             };
             
             const defaultSubject = subject || 'General';
+            // ✅ FIX: Use defaultPrice from frontend (can be 0)
+            const defaultPriceValue = defaultPrice ? parseFloat(defaultPrice) : 0;
             
             for (let index = 0; index < req.files.length; index++) {
                 const file = req.files[index];
@@ -183,11 +185,13 @@ router.post('/batch-upload',
                     if (useFileName === 'true' || !titles) {
                         title = fileName;
                         description = `Study notes for ${fileName}`;
-                        price = 499;
+                        // ✅ FIX: Use defaultPriceValue instead of hardcoded 499
+                        price = defaultPriceValue;
                     } else {
                         title = titles && titles[index] ? titles[index] : fileName;
                         description = descriptions && descriptions[index] ? descriptions[index] : `Study notes for ${title}`;
-                        price = prices && prices[index] ? parseFloat(prices[index]) : 499;
+                        // ✅ FIX: Use defaultPriceValue instead of hardcoded 499
+                        price = prices && prices[index] ? parseFloat(prices[index]) : defaultPriceValue;
                     }
                     
                     const result = await uploadPDF(file.buffer, file.originalname);
@@ -207,6 +211,7 @@ router.post('/batch-upload',
                     results.success.push({
                         fileName: file.originalname,
                         title: title,
+                        price: price,
                         id: note._id
                     });
                     
@@ -231,7 +236,7 @@ router.post('/batch-upload',
     }
 );
 
-// Delete note
+// Delete note (admin only)
 router.delete('/:id', authMiddleware, adminMiddleware, async (req, res) => {
     try {
         const note = await Note.findById(req.params.id);
